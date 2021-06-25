@@ -1,12 +1,30 @@
 <template>
   <div class="home">
     <div style="max-height: 300px; max-width: 300px">
-      <img style="max-width: 100%; max-height: 100%" :src="imgPreview" alt="">
+      <img id="imgPreview" style="max-width: 100%; max-height: 100%" alt="">
     </div>
     <form @submit.prevent="saveMultipleImages()" method="post">
       <input type="file" @change="processFile($event)" />
-      <button type="submit">subir imagen</button>
+      <button type="submit">subir imagen en varias calidades</button>
+      <button @click.prevent="saveSingleImage()">subir imagen original</button>
     </form>
+
+
+    <!-- Progress Bar -->
+    <div class="progress-bar" v-if="uploading.state || uploading.state == 'done'">
+      <div class="progress-bar--container">
+        <div 
+          class="progress-bar--bar" 
+          :style="{width: uploading.uploadProgress + '%', background: uploading.state == 'done'? 'green':'blue'}"
+        >
+        </div>
+        <span class="progress-bar--progressIndicator">
+          {{uploading.uploadProgress}}%
+        </span>
+      </div>
+      Progress bar
+    </div>
+
     <div>
       <h1>
         Imágenes recientemente subidas
@@ -15,13 +33,6 @@
         </span>
       </h1>
       <div>
-        <cld-context cloudName="katsudev">
-          <cld-image 
-            v-for="img in uploaded"
-            :publicId="img.publicId"
-            :key="img.publicId"
-          />
-        </cld-context>
       </div>
     </div>
     <hr>
@@ -32,12 +43,14 @@
         <span style="font-size: 1rem; font-style: italic">
           Mostradas desde img con la url en el src
         </span>
-        <img
-          v-for="img in uploaded"
-          style="width: 50%"
-          :src="img.url" 
-          :key="img.url"
-        />
+        <div :key="img.url" v-for="img in uploaded">
+          <img
+            style="max-width: 50%; text-align:center; margin-top: 2rem"
+            :src="img.url" 
+          />
+          <br>
+          {{img.secure_url}}
+        </div>
       </h1>
     </div>
   </div>
@@ -47,12 +60,38 @@
   .cld-image img{
     width: 50%;
   }
+
+  .progress-bar{
+    &--container{
+      border: 1px solid black;
+      text-align: center;
+      border-radius: 10px;
+      overflow: hidden;
+      height: 15px;
+      position: relative;
+    }
+
+    &--bar{
+      transition-timing-function: ease-in-out;
+      transition-property: width background-color;
+      transition-duration: 1s;
+      height: inherit;
+    }
+
+    &--progressIndicator{
+      background: inherit;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translateY(-50%) translateX(-50%);
+    }
+  }
 </style>
 
 <script>
 // @ is an alias to /src
 import HelloWorld from '@/components/HelloWorld.vue'
-import skaler from 'skaler';
+import resizeandsave from '@/assets/resizeandsave.js';
 
 export default {
   name: 'Home',
@@ -61,97 +100,45 @@ export default {
   },
   data(){
     return{ 
-      CLOUDINARY_URL: "https://api.cloudinary.com/v1_1/katsudev/image/upload",
-      CLOUDINARY_UPLOAD_PRESET: "ub0fxdpi",
-      CLOUDINARY_API_KEY: "832771279844432",
-      CLOUDINARY_API_SECRET: "E90jXPytaCVOFNYGocR5BodX3XA",
+      api: {
+        url: "https://api.cloudinary.com/v1_1/www-r2diesel-com/image/upload", 
+        key: "428361364281799", 
+        preset: "iwo6z8wd"
+      },
       imagen: [],
-      imgPreview: '',
-      uploaded:
-      [
-        // {
-          // publicId: '',
-          // url: ''
-        // },
-      ] 
+      uploaded: [],
+      uploading: {
+        uploadProgress: 0,
+        state: false // True, false, done
+      }
     }
   },
   methods: {
     // Showing Preview and getting image
     processFile(event) {
-      this.imagen = event.target.files[0];
-
-      let reader = new FileReader();
-
-      reader.onload = (event) => {
-        this.imgPreview = event.target.result;
-      }
-
-      reader.readAsDataURL(this.imagen);
+      this.imagen = resizeandsave.processFile(event, "imgPreview");
     },
-    async editImg(file, opts){
-      return new Promise(async resolve => {
-        const img = await skaler(file, opts);
-        resolve({img});
+    // Uploading a single image with the library
+    async saveSingleImage(){
+      await resizeandsave.saveImage(this.imagen, this.api).then(res => {
+        this.uploaded = this.uploaded.concat(res);
+      }).catch(e => {
+        console.log(e);
       });
     },
-    async saveImage(){
-      // Creating payload
-      let formData = new FormData();
-      formData.append("file", this.imagen);
-      formData.append("api_key", this.CLOUDINARY_API_KEY);
-      formData.append("upload_preset", this.CLOUDINARY_UPLOAD_PRESET);
-
-      // Upload image
-      return new Promise(async (resolve, reject) => {
-        try{
-          await fetch(this.CLOUDINARY_URL, { method: "POST", body: formData })
-                .then(response => response.json()) //convertimos la respuesta en json
-                .then(data => {
-                  resolve({publicId: data.public_id, url: data.url})
-                })
-                .catch(error => reject({error}));
-        } catch(error){
-          reject(error)
-        }
-
-      });
-    },
+    // Uploading a image in multiple resolutions with the library
     async saveMultipleImages(){
-      const images = await Promise.all([
-        this.editImg(this.imagen, {width: 200}),
-        this.editImg(this.imagen, {width: 500}),
-        this.editImg(this.imagen, {width: 900})
-      ]);
-
-      let imagesURL = [];
-
-      for (const {img} of images){
-        let saved = false;
-        this.imagen = img;
-
-        await this.saveImage().then(res=>{
-          saved = true;
-          imagesURL.push(res);
-        }).catch(_=>{
-          saved = false;
-          imagesURL = [];
-        });
-
-        if(!saved){
-          alert('Ocurrió un error. Vuelve a intentar');
-          return 0;
-        }
+      const uploading = (state, num) => {
+        this.uploading.state = state;
+        this.uploading.uploadProgress = num;
       }
 
-      // Aqui se pueden subir los enlaces a la BD,
-      // En este caso, guardaré los enlaces en la variable
-      // que uso para mostrar las imagenes subidas
-      if(imagesURL.length){
-        this.uploaded = this.uploaded.concat(imagesURL);
-        imagesURL = [];
-        console.log({uploaded: this.uploaded, imagesURL});
-      }
+      await resizeandsave.saveMultipleImages(this.imagen, this.api, uploading)
+        .then(res => {
+          this.uploaded = this.uploaded.concat(res);
+        }).catch(e => {
+          console.log(e)
+        })
     }
   },
 }
